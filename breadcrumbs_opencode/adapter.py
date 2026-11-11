@@ -5,7 +5,13 @@ import json
 
 from breadcrumbs import ports
 
+
+def _source(path):
+    from . import sessions
+    return sessions.sessions(path)
+
+
 if ports.layer("opencode", __file__):
     ports.harness("opencode", "OpenCode", ("opencode",),
                   lambda cmd: "# opencode.json\n" + json.dumps({"mcp": {"breadcrumbs": {
-                      "type": "local", "command": cmd, "enabled": True}}}, indent=2), order=40)
+                      "type": "local", "command": cmd, "enabled": True}}}, indent=2), order=40, source=_source)
