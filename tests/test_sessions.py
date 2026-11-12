@@ -40,6 +40,7 @@ class Sessions(harness_case.SourceCase):
             ("prt_6", "msg_2", json.dumps({"type": "text", "text": "About ten minutes."})),
             ("prt_8", "msg_2", json.dumps(step(40, 5, 2, 0, 700))),  # the step of each request: two requests
             ("prt_9", "msg_2", json.dumps(step(30, 4, 0, 700, 20))),
+            ("prt_99", "msg_2", json.dumps(step(20_000, 4, 0, 90_000, 500))),  # a request over 100,000 prompt tokens
             ("prt_7", "msg_3", json.dumps({"type": "text", "text": "never read"}))])
         db.commit()
         db.close()
@@ -63,13 +64,36 @@ class Sessions(harness_case.SourceCase):
         got = list(ports.harnesses()[self.KEY]["usage"](self.path))
         self.assertEqual([(r["req"], r["sess"], r["model"], r["prov"], r["src"], r["ts"]) for r in got],
                          [("prt_8", "ses_1", "demo-model", "demo", "opencode", 1767323045),
-                          ("prt_9", "ses_1", "demo-model", "demo", "opencode", 1767323045)])
+                          ("prt_9", "ses_1", "demo-model", "demo", "opencode", 1767323045),
+                          ("prt_99", "ses_1", "demo-model", "demo", "opencode", 1767323045)])
         self.assertEqual([(r["in"], r["cr"], r["cw"], r["out"], r["rsn"], r["prompt"]) for r in got],
-                         [(40, 0, 700, 5, 2, 740), (30, 700, 20, 4, 0, 750)])
+                         [(40, 0, 700, 5, 2, 740), (30, 700, 20, 4, 0, 750),
+                          (20_000, 90_000, 500, 4, 0, 110_500)])
+
+    def test_the_prompt_counts_the_cache_so_a_request_over_100000_shows(self):
+        # Haiku 5.5 steps up at 100,000 prompt tokens, and cache reads count toward them (context-bench README)
+        got = list(ports.harnesses()[self.KEY]["usage"](self.path))
+        self.assertEqual([r["req"] for r in got if r["prompt"] > 100_000], ["prt_99"])
 
     def test_a_broken_row_is_skipped_and_counted(self):
         (_sid, _title, meta, rows), = self.sessions()
         self.assertEqual((meta["skipped"], len(rows)), ("1", 4))
+
+
+@unittest.skipUnless(os.path.isfile(os.path.expanduser("~/.local/share/opencode/opencode.db")), "no OpenCode database here")
+class RealDatabase(unittest.TestCase):
+    """The database of this machine, read-only: whatever it holds, every record is whole."""
+
+    def test_every_request_has_a_model_and_a_prompt_that_is_the_sum_of_its_inputs(self):
+        for r in ports.harnesses()["opencode"]["usage"](None):
+            self.assertTrue(r["model"], r["req"])
+            self.assertEqual(r["prompt"], r["in"] + r["cr"] + r["cw"], r["req"])
+            self.assertEqual(r["src"], "opencode")
+
+    def test_every_session_has_an_id_and_rows(self):
+        for sid, _title, meta, rows in ports.harnesses()["opencode"]["source"](None):
+            self.assertTrue(sid)
+            self.assertIn("cwd", meta)
 
 
 if __name__ == "__main__":
