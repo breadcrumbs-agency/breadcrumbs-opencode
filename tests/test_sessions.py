@@ -5,11 +5,16 @@ import os
 import sqlite3
 import unittest
 
-from breadcrumbs import harness_case
+from breadcrumbs import harness_case, ports
 
 
 def tool(state):
     return {"type": "tool", "callID": "c1", "tool": "bash", "state": state}
+
+
+def step(inp, out, rsn, read, write):  # a step-finish part, made-up counts (input: without the cache, as OpenCode keeps it)
+    return {"type": "step-finish", "reason": "stop", "cost": 0,
+            "tokens": {"input": inp, "output": out, "reasoning": rsn, "cache": {"read": read, "write": write}}}
 
 
 class Sessions(harness_case.SourceCase):
@@ -23,7 +28,9 @@ class Sessions(harness_case.SourceCase):
                          "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);")
         db.execute("INSERT INTO session VALUES ('ses_1', 'Boil an egg', '/work/demo', 'ses_0', 1767323045000)")
         db.executemany("INSERT INTO message VALUES (?, 'ses_1', ?, ?)", [
-            ("msg_1", 1, json.dumps({"role": "user"})), ("msg_2", 2, json.dumps({"role": "assistant"})), ("msg_3", 3, "{broken")])
+            ("msg_1", 1, json.dumps({"role": "user"})), ("msg_3", 3, "{broken"),
+            ("msg_2", 2, json.dumps({"role": "assistant", "modelID": "demo-model", "providerID": "demo",
+                                     "tokens": {"input": 1, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}}}))])
         db.executemany("INSERT INTO part VALUES (?, ?, 'ses_1', 1767323045000, ?)", [
             ("prt_1", "msg_1", json.dumps({"type": "text", "text": "how long to boil an egg?"})),
             ("prt_2", "msg_1", json.dumps({"type": "text", "text": "an injected note", "synthetic": True})),
@@ -31,6 +38,8 @@ class Sessions(harness_case.SourceCase):
             ("prt_4", "msg_2", json.dumps({"type": "text", "text": "Let me look at the clock."})),
             ("prt_5", "msg_2", json.dumps(tool({"status": "completed", "input": {"command": "date"}, "output": "Fri 03:04"}))),
             ("prt_6", "msg_2", json.dumps({"type": "text", "text": "About ten minutes."})),
+            ("prt_8", "msg_2", json.dumps(step(40, 5, 2, 0, 700))),  # the step of each request: two requests
+            ("prt_9", "msg_2", json.dumps(step(30, 4, 0, 700, 20))),
             ("prt_7", "msg_3", json.dumps({"type": "text", "text": "never read"}))])
         db.commit()
         db.close()
@@ -49,6 +58,14 @@ class Sessions(harness_case.SourceCase):
     def test_the_session_keeps_its_title_folder_and_parent(self):
         (_sid, title, meta, _rows), = self.sessions()
         self.assertEqual((title, meta["cwd"], meta["parent_session_id"]), ("Boil an egg", "/work/demo", "ses_0"))
+
+    def test_each_step_is_a_request_with_the_model_of_its_message(self):
+        got = list(ports.harnesses()[self.KEY]["usage"](self.path))
+        self.assertEqual([(r["req"], r["sess"], r["model"], r["prov"], r["src"], r["ts"]) for r in got],
+                         [("prt_8", "ses_1", "demo-model", "demo", "opencode", 1767323045),
+                          ("prt_9", "ses_1", "demo-model", "demo", "opencode", 1767323045)])
+        self.assertEqual([(r["in"], r["cr"], r["cw"], r["out"], r["rsn"], r["prompt"]) for r in got],
+                         [(40, 0, 700, 5, 2, 740), (30, 700, 20, 4, 0, 750)])
 
     def test_a_broken_row_is_skipped_and_counted(self):
         (_sid, _title, meta, rows), = self.sessions()
