@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "breadcrumbs-opencode"
 version = "0.4.1"
-description = "OpenCode adapter for breadcrumbs: identify and setup."
+description = "OpenCode adapter for breadcrumbs: identify, setup, sessions, usage, state.db and sync."
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -13,3 +13,6 @@ dependencies = ["breadcrumbs-common>=0.4.1,<0.5"]
 
 [tool.setuptools]
 packages = ["breadcrumbs_opencode"]
+
+[tool.setuptools.package-data]
+breadcrumbs_opencode = ["icon.png"]
