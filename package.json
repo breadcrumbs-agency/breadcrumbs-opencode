@@ -1,0 +1,16 @@
+{
+  "name": "breadcrumbs-opencode",
+  "version": "0.4.1",
+  "description": "The OpenCode plugin of breadcrumbs: the MCP server, crumb and crumb_find, /viz and /scope, the sync at idle, and ACE.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./plugin/index.js"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "*"
+  },
+  "scripts": {
+    "test": "node --test plugin/test/*.test.mjs"
+  }
+}
