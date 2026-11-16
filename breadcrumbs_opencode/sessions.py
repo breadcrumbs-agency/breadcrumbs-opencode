@@ -71,10 +71,80 @@ def database(path=None):
         con.close()
 
 
+def is_v2(con):
+    """True for the layout of OpenCode 2 (its session_v2, session_message and session_part tables)."""
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'").fetchone() is not None
+
+
+V2_SESSIONS = "SELECT id, title, directory, parent_id FROM session_v2 ORDER BY time_created, id"
+V2_MESSAGES = ("SELECT id, type, time_created, data FROM session_message WHERE session_id = ?"
+               " ORDER BY seq, time_created, id")
+V2_USAGE = "SELECT m.id, m.session_id, m.time_created, m.data FROM session_message m WHERE m.type = 'assistant' ORDER BY m.time_created, m.id"
+
+
+def output_text(content):
+    """The text of a tool's output in the state of OpenCode 2: a text, or a list of parts with text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(p["text"] for p in content if isinstance(p, dict) and isinstance(p.get("text"), str))
+    return ""
+
+
+def session_v2(con, sid, title, where, parent):
+    """(id, title, meta, rows) of one session of the OpenCode 2 layout. A user message is a user row; an assistant
+    message holds its text parts (a text row), its reasoning (skipped) and its tool calls (a call, then its result
+    when the call is completed or failed). Messages of another type (idle, model-switched) are skipped."""
+    rows, skipped = Rows(), 0
+    for mid, mtype, made, data in con.execute(V2_MESSAGES, (sid,)).fetchall():
+        ts = int((made or 0) / 1000)  # OpenCode counts milliseconds
+        try:
+            data = json.loads(data)
+        except (ValueError, TypeError):
+            skipped += 1
+            continue
+        if not isinstance(data, dict):
+            continue
+        if mtype == "user":
+            rows.say("user", data.get("text"), ts)
+        elif mtype == "assistant":
+            for item in data.get("content") or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    rows.say("assistant", item.get("text"), ts)
+                elif item.get("type") == "tool" and isinstance(item.get("state"), dict):
+                    state, call = item["state"], item.get("id")
+                    rows.call(call, item.get("name"), state.get("input"), ts)
+                    if state.get("status") in ("completed", "error"):
+                        rows.result(call, output_text(state.get("content")) or str(state.get("error") or ""), ts)
+    return sid, title, meta(skipped=skipped, cwd=where, parent_session_id=parent), rows.rows
+
+
+def usage_v2(con):
+    """The usage of the OpenCode 2 layout: one record for each assistant message that counted its tokens."""
+    for mid, sid, made, data in con.execute(V2_USAGE).fetchall():
+        try:
+            data = json.loads(data)
+            tokens = data["tokens"]
+            cache, model = tokens.get("cache") or {}, data.get("model") or {}
+            model_id, prov = model.get("id"), model.get("providerID")
+            read, write = cache.get("read"), cache.get("write")
+        except (ValueError, AttributeError, KeyError, TypeError):
+            continue
+        yield usage_record.record("opencode", sid, mid, int((made or 0) / 1000), model_id, prov, tokens.get("input"),
+                                  read, write, tokens.get("output"), tokens.get("reasoning"))
+
+
 def sessions(path=None):
     """The source of the harness opencode: the sessions of the database at `path` (default: the database of
-    OpenCode), oldest first, each (id, title, meta, rows). The database closes when the iterator ends."""
+    OpenCode), oldest first, each (id, title, meta, rows). The database closes when the iterator ends. The layout is
+    read from the tables: session_v2 (OpenCode 2) or session (OpenCode 1)."""
     with database(path) as con:
+        if is_v2(con):
+            for found in con.execute(V2_SESSIONS).fetchall():
+                yield session_v2(con, *found)
+            return
         for found in con.execute("SELECT id, title, directory, parent_id FROM session ORDER BY time_created, id").fetchall():
             yield session(con, *found)
 
@@ -85,8 +155,12 @@ STEPS = ("SELECT p.id, p.session_id, p.time_created, m.data, p.data FROM part p 
 
 def usage(path=None):
     """The usage of the harness opencode: a usage record (breadcrumbs/usage.py record()) for each step-finish part of the
-    database, oldest first. A part or message whose data is not JSON is skipped."""
+    database, oldest first (OpenCode 2: for each assistant message with its tokens). A part or message whose data is
+    not JSON is skipped."""
     with database(path) as con:
+        if is_v2(con):
+            yield from usage_v2(con)
+            return
         for pid, sid, made, message, part in con.execute(STEPS).fetchall():
             try:
                 message, part = json.loads(message), json.loads(part)
