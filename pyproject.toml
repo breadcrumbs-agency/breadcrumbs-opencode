@@ -9,7 +9,7 @@ description = "OpenCode adapter for breadcrumbs: identify, setup, sessions, usag
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["breadcrumbs-common>=0.4.1,<0.5"]
+dependencies = ["breadcrumbs-common>=0.5.0,<0.6"]
 
 [tool.setuptools]
 packages = ["breadcrumbs_opencode"]
